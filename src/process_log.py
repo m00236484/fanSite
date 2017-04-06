@@ -12,7 +12,8 @@ class logProcess:
     self.dicHost = {}
     self.dicResource = {}
     self.dicResourceMax = {}
-    self.dicBlocked = {}
+    self.dicBlocked = []
+    self.dicblockedLog ={}
     self.readFile(inFile)
     self.outHours = hoursPath
     self.outHost = hostPath
@@ -51,9 +52,9 @@ class logProcess:
         Scons = hit["size"]
         request = hit["request"]
         time = hit["time"]
-        ttime = hit["time"]
+        #ttime = hit["time"]
         time = time[0:15]+"00:00"+time[20:]
-        status = hit["status"]
+        status = int(hit["status"])
         if Scons == "-":
            cons = 0 
         else:
@@ -66,11 +67,16 @@ class logProcess:
         else:
           dicval.append(1)	  
           dicval.append(cons)
-        dicAna[host]= dicval   	      
+        dicAna[host]= dicval
+      ttime, zone = hit["time"].split()
+      hit["time"] = datetime.strptime(ttime , "%d/%b/%Y:%H:%M:%S")
+      
       self.hostsAccess(host , dicval[0] )
       self.resourceConsume(request , cons )
       self.hourVisits(time )
-      self.hostsBlocked(host , ttime , status)
+      self.hostsBlocked(host , ttime , status , line)
+      if i == 100000: return
+      i = i+1
 
   def hostsAccess(self, host, accessNo):
     lKey = ""
@@ -138,83 +144,96 @@ class logProcess:
     while len(d) > 10: #and stop:
       lKey = d.keys()[-1]
       del d[lKey]
-      '''
-      pKey = d.keys()[-2]  
-      if d[lKey] < d[pKey]:
-        print 1	
-        del d[lKey]
-      else:
-        stop = False
-      '''
     self.dicHour = d
 
-  def hostsBlocked(self, host , time , status):
-    lKey = ""
-    pKey = ""
-    stop = True
-    secondSeq = []
+  def hostsBlocked(self, host , time , status , hit):
     
-    if self.dicBlocked.has_key(host):
-      secondSeq = self.dicBlocked[host]
-      if len(secondSeq) == 4 or len(secondSeq) == 2:
-        if time - secondSeq[0] > 20:
-          del secondSeq[0, 2]
+    #print(int(datetime.strptime(time , "%d/%b/%Y:%H:%M:%S")))
+    blockedLog=[] #[0 firstTime, 1: no of failuer, 2: blocked ,3: starttimeto block]
+    if self.dicblockedLog.has_key(host):
+      blockedLog = self.dicblockedLog[host]
+      prvTime = datetime.strptime(blockedLog[0] , "%d/%b/%Y:%H:%M:%S")
+      currentTime = datetime.strptime(time , "%d/%b/%Y:%H:%M:%S")
+      blcokedTime = datetime.strptime(blockedLog[3] , "%d/%b/%Y:%H:%M:%S")
+      #print(prvTime, currentTime ,abs(prvTime  - currentTime))
+      if blockedLog[2] >= 1 and (abs(currentTime - blcokedTime ) <= timedelta(minutes=5)): # in blocked period
+        # add to blocked record
+        self.dicBlocked.append(hit)
+        
+      elif blockedLog[1]>=1 and  status == 401 and (abs(prvTime  - currentTime) <= timedelta(seconds=20)):
+        # change to block log and add to blog log
+        if blockedLog[1] == 1:
+          blockedLog[1] += 1
+          self.dicblockedLog[host] = blockedLog
+          #increment failuer attempet
         else:
-          secondSeq.appened(time)
-          secondSeq.appened(1)
-    elif not self.dicBlocked.has_key(host) and status == "401":
-      secondSeq = [time, 0]
-      #self.dicBlocked[hour] = 1
-    else:
-      secondSeq = [time, 0]
-      #self.dicBlocked[hour] = 1
-    d = OrderedDict(sorted(self.dicBlocked.items(), key=itemgetter(1), reverse=True))
-    #print d
-    self.dicBlocked.clear()
-    while len(d) > 10: #and stop:
-      lKey = d.keys()[-1]
-      del d[lKey]
-      '''
-      pKey = d.keys()[-2]  
-      if d[lKey] < d[pKey]:
-        print 1	
-        del d[lKey]
+          self.dicBlocked.append(hit)
+          blockedLog[2] += 1
+          self.dicblockedLog[host] = blockedLog
+          # change to block log and add to blog log
+      elif status == 401:
+        blockedLog.clear()
+        #add new block check
+        blockedLog.append(time)
+        blockedLog.append(1)
+        blockedLog.append(0)
+        blockedLog.append(time)
+        self.dicblockedLog[host] = blockedLog
       else:
-        stop = False
-      '''
-    self.dicBlocked = d
-
-  
+        # delete from block check
+        del self.dicblockedLog[host]
+      
+    else:
+      if status == 401:
+        blockedLog.append(time)
+        blockedLog.append(1)
+        blockedLog.append(0)
+        blockedLog.append(time)
+        self.dicblockedLog[host] = blockedLog
+        
+      #self.dicBlocked[hour] = 1
+      
   def genOutput(self):
-    self.write_report(self.dicResourceMax ,self.outResource)
-    self.write_report(self.dicHost , self.outHost)
-    self.write_report(self.dicHour , self.outHours )
-    self.write_report(self.dicBlocked , self.outBlocked)
+    self.write_report(self.dicResourceMax,2 ,self.outResource)
+    self.write_report(self.dicHost ,0, self.outHost)
+    self.write_report(self.dicHour , 0, self.outHours )
+    self.write_report(self.dicBlocked , 1, self.outBlocked)
     
 
   def writeOutput(dic, fileName, outFolder):
     return 1
     
-      
-    
-  def write_report(self, dict, filename):
+  def write_report(self, dict,i, filename):
     input_filename=open(filename, "w")
     outString =""
-    for (k,v) in dict.items():
-      outString = ""
-      outString = k+","+str(v)+"\n"
-      input_filename.write(outString)
+    if i == 1 :
+      for item in dict:
+        outString =str(item) 
+        input_filename.write(outString)
+    else:
+      for (k,v) in dict.items():
+        outString = ""
+        if  i == 2 :
+          outString = k+"\n"
+        else:
+          outString = k+","+str(v)+"\n"
+          
+          
+        input_filename.write(outString)
+      
     input_filename.close()  
     return filename
         
 def main():
   if len(sys.argv) >= 5:
+    
     inFile = sys.argv[1]
     outHost = sys.argv[2]
     outHours = sys.argv[3]
     outResource = sys.argv[4]
     outBlocked = sys.argv[5]
     lp = logProcess(inFile, outHost, outHours, outResource , outBlocked)
+    
   else:
     print 'Please Enter Input and Output Files '
 
